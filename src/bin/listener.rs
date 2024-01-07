@@ -1,3 +1,8 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use pubsub::{Listener, Message};
 
 fn main() {
@@ -6,7 +11,7 @@ fn main() {
     let mut args = std::env::args();
     let topic = args.nth(1).unwrap();
 
-    Listener::new(
+    let mut listener = Listener::new(
         &ctx,
         &topic,
         Some(move |message: Message| {
@@ -14,7 +19,14 @@ fn main() {
         }),
     );
 
-    println!("Listening on topic '{}'", topic);
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    ctrlc::set_handler(move || {
+        println!("Handling ctrlc!");
+        listener.stop();
+        r.store(false, Ordering::Relaxed);
+    })
+    .unwrap();
 
-    loop {}
+    while running.load(Ordering::Relaxed) {}
 }

@@ -1,4 +1,10 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 
 /// A serializable message.
 #[derive(Clone, Debug)]
@@ -18,7 +24,11 @@ impl Message {
 }
 
 /// Subscribes to and acts on messages as they arrive.
-pub struct Listener {}
+pub struct Listener {
+    topic: String,
+    running: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
 
 impl Listener {
     /// Subscribe to `topic` and execute `callback` on when message is received.
@@ -26,31 +36,64 @@ impl Listener {
         ctx: &zmq::Context,
         topic: &str,
         callback: Option<impl Fn(Message) -> () + Send + 'static>,
-    ) {
+    ) -> Self {
         let socket = ctx.socket(zmq::SUB).unwrap();
-        let running = true;
+        let mut listener = Listener {
+            topic: topic.to_owned(),
+            running: Arc::new(AtomicBool::new(true)),
+            thread: None,
+        };
+
+        let running = listener.running.clone();
 
         socket.connect(Proxy::PUB_ADDR).unwrap();
         socket.set_subscribe(topic.as_bytes()).unwrap();
 
         std::thread::sleep(std::time::Duration::new(1, 0));
 
-        std::thread::spawn(move || {
-            while running {
-                let topic = socket.recv_msg(0).unwrap();
+        println!("Listening on topic {:?}...", &topic);
+        listener.thread = Some(std::thread::spawn(move || {
+            while running.load(Ordering::Relaxed) {
+                // Use a combination of DONTWAIT and continue so
+                // the loop will end if interrupted. This is made
+                // possible by zeromq guarantees around atomic
+                // multipart message receipt.
+                let topic = socket.recv_msg(zmq::DONTWAIT);
+                if topic.is_err() {
+                    continue;
+                }
+
                 let data = socket.recv_msg(0).unwrap();
+
                 let payload = bincode::deserialize(&data).unwrap();
 
-                let message = Message::new(topic.as_str().unwrap(), payload);
+                let message = Message::new(topic.unwrap().as_str().unwrap(), payload);
                 println!("Received message {:?}", message);
 
                 if let Some(callback) = &callback {
                     callback(message);
                 }
             }
-        });
+        }));
+
+        listener
+    }
+
+    pub fn stop(&mut self) {
+        self.running.store(false, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            thread.join().unwrap();
+            println!("Listener on topic {:?} has stopped listening.", &self.topic);
+        }
     }
 }
+
+// impl Drop for Listener {
+//     fn drop(&mut self) {
+//         println!("Dropping Listener!");
+//         self.stop();
+//     }
+// }
 
 pub struct Publisher {
     socket: zmq::Socket,
@@ -104,8 +147,6 @@ impl Proxy {
             backend.as_poll_item(zmq::POLLIN),
         ];
 
-        // zmq::proxy(&frontend, &backend).unwrap();
-
         loop {
             if zmq::poll(&mut items, -1).is_err() {
                 break; // Interrupted
@@ -132,12 +173,12 @@ impl Proxy {
                 if event[0] == 1 {
                     let topic = &event[1..];
 
-                    println!(
-                        "Sending cached topic {}",
-                        std::str::from_utf8(topic).unwrap()
-                    );
-
                     if let Some(previous) = cache.get(topic) {
+                        println!(
+                            "Sending cached topic {}",
+                            std::str::from_utf8(topic).unwrap()
+                        );
+
                         backend.send(topic, zmq::SNDMORE).unwrap();
                         backend.send(previous, 0).unwrap();
                     }
