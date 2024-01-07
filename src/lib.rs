@@ -49,8 +49,6 @@ impl Listener {
         socket.connect(Proxy::PUB_ADDR).unwrap();
         socket.set_subscribe(topic.as_bytes()).unwrap();
 
-        std::thread::sleep(std::time::Duration::new(1, 0));
-
         println!("Listening on topic {:?}...", &topic);
         listener.thread = Some(std::thread::spawn(move || {
             while running.load(Ordering::Relaxed) {
@@ -88,12 +86,11 @@ impl Listener {
     }
 }
 
-// impl Drop for Listener {
-//     fn drop(&mut self) {
-//         println!("Dropping Listener!");
-//         self.stop();
-//     }
-// }
+impl Drop for Listener {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
 
 pub struct Publisher {
     socket: zmq::Socket,

@@ -11,7 +11,7 @@ fn main() {
     let mut args = std::env::args();
     let topic = args.nth(1).unwrap();
 
-    let mut listener = Listener::new(
+    let _listener = Listener::new(
         &ctx,
         &topic,
         Some(move |message: Message| {
@@ -23,7 +23,6 @@ fn main() {
     let r = running.clone();
     ctrlc::set_handler(move || {
         println!("Handling ctrlc!");
-        listener.stop();
         r.store(false, Ordering::Relaxed);
     })
     .unwrap();
