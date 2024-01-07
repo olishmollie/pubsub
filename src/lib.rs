@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
-
 /// A serializable message.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Message {
     pub topic: String,
-    pub payload: Vec<u8>,
+    pub payload: String,
 }
 
 impl Message {
@@ -14,7 +12,7 @@ impl Message {
     pub fn new(topic: &str, payload: &str) -> Self {
         Message {
             topic: topic.to_owned(),
-            payload: bincode::serialize(&payload).unwrap(),
+            payload: payload.to_owned(),
         }
     }
 }
@@ -30,7 +28,7 @@ impl Listener {
         mut callback: Option<impl Fn(Message) -> () + Send + 'static>,
     ) {
         let socket = ctx.socket(zmq::SUB).unwrap();
-        let running = false;
+        let running = true;
 
         socket.connect(Proxy::PUB_ADDR).unwrap();
         socket.set_subscribe(topic.as_bytes()).unwrap();
@@ -39,7 +37,9 @@ impl Listener {
             while running {
                 let topic = socket.recv_msg(0).unwrap();
                 let data = socket.recv_msg(0).unwrap();
-                let message = Message::new(topic.as_str().unwrap(), data.as_str().unwrap());
+                let payload = bincode::deserialize(&data).unwrap();
+
+                let message = Message::new(topic.as_str().unwrap(), payload);
 
                 if let Some(callback) = callback.take() {
                     callback(message);
@@ -72,7 +72,9 @@ impl Publisher {
             "Publishing on topic '{:?}', payload '{:?}'",
             message.topic, message.payload
         );
-        self.socket.send(message.payload, 0).unwrap();
+        self.socket
+            .send(bincode::serialize(&message.payload).unwrap(), 0)
+            .unwrap();
     }
 }
 
@@ -127,6 +129,7 @@ impl Proxy {
                 println!("pub is readable!");
                 // Event is one byte 0=unsub or 1=sub, followed by topic.
                 let event = backend.recv_msg(0).unwrap();
+                println!("event: {:?}", event);
 
                 if event[0] == 1 {
                     let topic = &event[1..];

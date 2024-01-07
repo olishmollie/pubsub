@@ -10,10 +10,7 @@ fn main() {
         &ctx,
         &topic,
         Some(move |message: Message| {
-            println!(
-                "Received payload: '{:?}",
-                std::str::from_utf8(&message.payload)
-            );
+            println!("Received payload: '{:?}", &message.payload);
         }),
     );
 
