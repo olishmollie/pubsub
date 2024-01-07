@@ -21,17 +21,19 @@ impl Message {
 pub struct Listener {}
 
 impl Listener {
-    /// Subscribe to `topic` and execute `callback` on message receipts.
+    /// Subscribe to `topic` and execute `callback` on when message is received.
     pub fn new(
         ctx: &zmq::Context,
         topic: &str,
-        mut callback: Option<impl Fn(Message) -> () + Send + 'static>,
+        callback: Option<impl Fn(Message) -> () + Send + 'static>,
     ) {
         let socket = ctx.socket(zmq::SUB).unwrap();
         let running = true;
 
         socket.connect(Proxy::PUB_ADDR).unwrap();
         socket.set_subscribe(topic.as_bytes()).unwrap();
+
+        std::thread::sleep(std::time::Duration::new(1, 0));
 
         std::thread::spawn(move || {
             while running {
@@ -40,8 +42,9 @@ impl Listener {
                 let payload = bincode::deserialize(&data).unwrap();
 
                 let message = Message::new(topic.as_str().unwrap(), payload);
+                println!("Received message {:?}", message);
 
-                if let Some(callback) = callback.take() {
+                if let Some(callback) = &callback {
                     callback(message);
                 }
             }
@@ -69,7 +72,7 @@ impl Publisher {
             .send(message.topic.as_bytes(), zmq::SNDMORE)
             .unwrap();
         println!(
-            "Publishing on topic '{:?}', payload '{:?}'",
+            "Publishing on topic {:?}, payload {:?}",
             message.topic, message.payload
         );
         self.socket
@@ -104,20 +107,15 @@ impl Proxy {
         // zmq::proxy(&frontend, &backend).unwrap();
 
         loop {
-            println!("Polling for messages...");
             if zmq::poll(&mut items, -1).is_err() {
                 break; // Interrupted
             }
 
             if items[0].is_readable() {
-                println!("sub is readable!");
                 let topic = frontend.recv_msg(0).unwrap();
                 let message = frontend.recv_msg(0).unwrap();
 
-                println!(
-                    "Proxy received topic '{:?}', payload '{:?}'",
-                    topic, message
-                );
+                println!("Proxy received topic {:?}, payload {:?}", topic, message);
 
                 cache.insert(topic.to_vec(), message.to_vec());
 
@@ -126,10 +124,10 @@ impl Proxy {
             }
 
             if items[1].is_readable() {
-                println!("pub is readable!");
                 // Event is one byte 0=unsub or 1=sub, followed by topic.
                 let event = backend.recv_msg(0).unwrap();
-                println!("event: {:?}", event);
+
+                println!("Proxy received event {:?}", event);
 
                 if event[0] == 1 {
                     let topic = &event[1..];

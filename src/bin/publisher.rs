@@ -17,6 +17,5 @@ fn main() {
     });
 
     std::thread::sleep(std::time::Duration::new(10, 0));
-
     drop(guard)
 }
